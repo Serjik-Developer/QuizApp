@@ -1,140 +1,99 @@
 package com.example.quizapp
-import android.annotation.SuppressLint
+
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
-import android.widget.Button
 import android.widget.ImageButton
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.quizapp.Adapters.QuizAdapter
 import com.example.quizapp.Interfaces.OnItemClickListener
 import com.example.quizapp.Models.QuizMain
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
-import org.json.JSONObject
+import com.example.quizapp.presentation.common.collectLatestLifecycleFlow
+import com.example.quizapp.presentation.main.MainEvent
+import com.example.quizapp.presentation.main.MainViewModel
+import dagger.hilt.android.AndroidEntryPoint
+
+@AndroidEntryPoint
 class MainActivity : AppCompatActivity(), OnItemClickListener {
-    @SuppressLint("MissingInflatedId")
     private val quizList = mutableListOf<QuizMain>()
     private lateinit var quizAdapter: QuizAdapter
-    private lateinit var login_user: TextView
-    private lateinit var exp_user: TextView
+    private val viewModel: MainViewModel by viewModels()
 
-    @SuppressLint("MissingInflatedId")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        login_user = findViewById(R.id.login_user)
-        exp_user = findViewById(R.id.exp_user)
+
+        val loginUser = findViewById<TextView>(R.id.login_user)
+        val expUser = findViewById<TextView>(R.id.exp_user)
+        val addButton = findViewById<ImageButton>(R.id.addBtn)
         val logout = findViewById<ImageButton>(R.id.log_out)
-        val sharedPref = getSharedPreferences("AppPreferences", MODE_PRIVATE)
-        val token = sharedPref.getString("auth_token", "")!!
-        if (token == null || token == "") startActivity(Intent(this, LoginActivity::class.java))
-        GETINFOABOUTUSER(token)
-        GETALLQUIZ(token)
+        val recyclerView = findViewById<RecyclerView>(R.id.RVEnable)
+
+        recyclerView.layoutManager = LinearLayoutManager(this)
+        quizAdapter = QuizAdapter(quizList, this)
+        recyclerView.adapter = quizAdapter
+
         logout.setOnClickListener {
-            sharedPref.edit().putString("auth_token", "").commit()
-            startActivity(Intent(this, LoginActivity::class.java))
+            viewModel.logout()
         }
-        val btn = findViewById<ImageButton>(R.id.addBtn)
-        btn.setOnClickListener {
+        addButton.setOnClickListener {
             startActivity(Intent(this, AddActivity::class.java))
         }
 
-        val RVEnable = findViewById<RecyclerView>(R.id.RVEnable)
-        RVEnable.layoutManager = LinearLayoutManager(this)
-        quizAdapter = QuizAdapter(quizList, this)
-        RVEnable.adapter = quizAdapter
+        collectLatestLifecycleFlow(viewModel.uiState) { state ->
+            loginUser.text = "Hello, ${state.userLogin}"
+            expUser.text = "XP: ${state.userExp}"
+            addButton.visibility = if (state.isAdmin) View.VISIBLE else View.GONE
+
+            quizList.clear()
+            quizList.addAll(
+                state.quizzes.map { quiz ->
+                    QuizMain(
+                        id = quiz.id,
+                        name = quiz.name,
+                        description = quiz.description,
+                    )
+                },
+            )
+            quizAdapter.notifyDataSetChanged()
+        }
+
+        collectLatestLifecycleFlow(viewModel.events) { event ->
+            when (event) {
+                is MainEvent.Message -> {
+                    Toast.makeText(this, event.message, Toast.LENGTH_SHORT).show()
+                }
+                MainEvent.NavigateToLogin -> {
+                    startActivity(Intent(this, LoginActivity::class.java))
+                    finish()
+                }
+            }
+        }
     }
 
-    private fun GETINFOABOUTUSER(token: String) {
-        val client = OkHttpClient()
-        val request = Request.Builder()
-            .url("https://backend-quizapp-9ad6.onrender.com/user")
-            .addHeader("Authorization", "Bearer $token")
-            .build()
-
-        Thread {
-            try {
-                val response = client.newCall(request).execute()
-                if (response.isSuccessful) {
-                    response.body?.string()?.let { responseBody ->
-                        val jsonResponse = JSONObject(responseBody)
-                        val login = jsonResponse.getString("login")
-                        val exp = jsonResponse.getString("exp")
-                        val role = jsonResponse.getString("role")
-                        val btn = findViewById<ImageButton>(R.id.addBtn)
-                        runOnUiThread {
-                            if (role!="admin") btn.visibility = View.GONE
-                            login_user.text = "Привет $login"
-                            exp_user.text = "У вас $exp очков!"
-                        }
-                    }
-                } else {
-                    response.body?.string()?.let { responseBody ->
-                        val jsonResponse = JSONObject(responseBody)
-                        if (jsonResponse.optString("message") == "Not authorized") {
-                            runOnUiThread {
-                                startActivity(Intent(this, LoginActivity::class.java))
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }.start()
-    }
-
-    @SuppressLint("NotifyDataSetChanged")
-    private fun GETALLQUIZ(token: String) {
-        val client = OkHttpClient()
-        val request = Request.Builder()
-            .url("https://backend-quizapp-9ad6.onrender.com/Quiz")
-            .addHeader("Authorization", "Bearer $token")
-            .build()
-
-        Thread {
-            try {
-                val response = client.newCall(request).execute()
-                if (response.isSuccessful) {
-                    response.body?.string()?.let { responseBody ->
-                        val jsonArray = JSONArray(responseBody)
-
-                        val quizzes = mutableListOf<QuizMain>()
-                        for (i in 0 until jsonArray.length()) {
-                            val item = jsonArray.getJSONObject(i)
-                            val id = item.getString("Id")
-                            val text = item.getString("Text")
-                            val desc = item.getString("Description")
-                            quizzes.add(QuizMain(id, text, desc))
-                        }
-
-                        runOnUiThread {
-                            quizList.clear()
-                            quizList.addAll(quizzes)
-                            quizAdapter.notifyDataSetChanged()
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }.start()
+    override fun onResume() {
+        super.onResume()
+        viewModel.loadContent()
     }
 
     override fun onItemClick(quizId: String, quizName: String, quizDesc: String) {
-        val intent = Intent(this, QuizActivity::class.java)
-        intent.putExtra("QUIZ_ID", quizId)
-            .putExtra("QUIZ_NAME", quizName)
-            .putExtra("QUIZ_DESC", quizDesc)
-        startActivity(intent)
+        startActivity(
+            Intent(this, QuizActivity::class.java)
+                .putExtra("QUIZ_ID", quizId)
+                .putExtra("QUIZ_NAME", quizName)
+                .putExtra("QUIZ_DESC", quizDesc),
+        )
     }
-    override fun onEditClick(quizId: String, quizName: String, quizDesc: String) {}
-    override fun onDeleteClick(quizId: String) {}
+
+    override fun onEditClick(quizId: String, quizName: String, quizDesc: String) = Unit
+
+    override fun onDeleteClick(quizId: String) = Unit
+
     fun addact(view: View) {
         startActivity(Intent(this, AddActivity::class.java))
     }
